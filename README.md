@@ -25,3 +25,11 @@ R/
 05_xgboost_model.R – Trains and tunes multiclass XGBoost models, conducts cross-validation, computes performance metrics, and produces variable importance plots.
 
 figures/ – All figures used in the manuscript (EGA network, stability plots, cluster plot, confusion matrix, variable importance, etc.).
+
+## Data Source and Citation
+
+The NHES data and documentation are produced and maintained by NCES. Users should follow NCES guidelines for citation and responsible use. For full documentation and original downloads, visit the NCES website.
+
+## Contact
+
+For questions about the code or replication of the analyses, please initiate pull requests in this repository. Any concerns are welcome for bug fixes, clarification, or extensions of the analyses.
