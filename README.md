@@ -6,25 +6,25 @@ All raw data files and codebooks are obtained directly from the U.S. Department 
 
 ## Repository Structure
 
-data/
+`data/`
 
-NHES_raw/ – Original NHES data files downloaded from the IES/NCES website.
+-   `NHES_raw/` – Original NHES data files downloaded from the IES/NCES website.
 
-codebook/ – Corresponding codebook and survey documentation (PDF) from NCES.
+-   `codebook/` – Corresponding codebook and survey documentation (PDF) from NCES.
 
-R/
+`R/`
 
-01_data_cleaning.R – Imports raw NHES files, selects FPP variables and demographic/student characteristics, recodes responses, and saves analysis-ready data.
+-   `01_data_cleaning.R` – Imports raw NHES files, selects FPP variables and demographic/student characteristics, recodes responses, and saves analysis-ready data.
 
-02_ega_dimension_reduction.R – Runs Exploratory Graph Analysis (EGA), GLASSO estimation, walk-trap community detection, and bootstrap stability checks; outputs figures and tables for FPP dimensions.
+-   `02_ega_dimension_reduction.R` – Runs Exploratory Graph Analysis (EGA), GLASSO estimation, walk-trap community detection, and bootstrap stability checks; outputs figures and tables for FPP dimensions.
 
-03_kmeans_clustering.R – Performs k-means clustering on EGA component scores, selects optimal k using NbClust, and generates cluster plots and descriptive statistics by profile.
+-   `03_kmeans_clustering.R` – Performs k-means clustering on EGA component scores, selects optimal k using NbClust, and generates cluster plots and descriptive statistics by profile.
 
-04_multinomial_regression.R – Fits multinomial logistic regression models predicting FPP profiles from demographic and child variables; computes accuracy, confusion matrix, and mosaic plot.
+-   `04_multinomial_regression.R` – Fits multinomial logistic regression models predicting FPP profiles from demographic and child variables; computes accuracy, confusion matrix, and mosaic plot.
 
-05_xgboost_model.R – Trains and tunes multiclass XGBoost models, conducts cross-validation, computes performance metrics, and produces variable importance plots.
+-   `05_xgboost_model.R` – Trains and tunes multiclass XGBoost models, conducts cross-validation, computes performance metrics, and produces variable importance plots.
 
-figures/ – All figures used in the manuscript (EGA network, stability plots, cluster plot, confusion matrix, variable importance, etc.).
+-   `figures/` – All figures used in the manuscript (EGA network, stability plots, cluster plot, confusion matrix, variable importance, etc.).
 
 ## Data Source and Citation
 
