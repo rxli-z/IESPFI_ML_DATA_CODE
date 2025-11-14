@@ -1,0 +1,902 @@
+---
+title: "IES PFI ML Data Analysis"
+author: "RL"
+date: "`r Sys.Date()`"
+output:
+  html_document: 
+    number_sections: true
+    toc: true
+  pdf_document: default
+editor_options:
+  markdown:
+    wrap: sentence
+---
+
+# Data
+
+The National Household Education Surveys Program (NHES), the primary household survey initiative of the National Center for Education Statistics (NCES) under the Institute of Education Sciences (IES), gathers nationally representative data that provides insight into the educational experiences of children and families across the United States.
+These surveys are conducted every three to four years and cover a range of topics related to early childhood care and education, family engagement in schools, and homeschooling.
+The data used in this specific analysis comes from the Parent and Family Involvement in Education Survey, which provides comprehensive information on family and child demographics, family-professional partnership factors, and student outcomes as reported by a sample of \~16,000 families surveyed in 2019.
+The initial setup of this complete dataset as retrieved from IES is outlined below.
+
+```{r setup, include=FALSE}
+# Load libraries
+library(tidyverse)
+library(tidymodels)
+library(janitor)
+library(xgboost)
+library(vip)
+library(yardstick)
+library(rpart)
+library(rpart.plot)
+library(polycor)
+library(ggplot2)
+library(reshape2)
+library(EGAnet)
+library(factoextra)
+library(NbClust)
+library(cluster)
+library(nnet)
+library(glmnet)
+library(caret)
+library(readr)
+library(stringr)
+library(labelled)
+library(hardhat)
+library(themis)
+```
+
+```{r, warning=FALSE, message=FALSE}
+# Load the dataset
+pfi_data <- read_csv("pfi_data.csv")
+
+# Inspect the structure of the dataset
+glimpse(pfi_data[, c(1:10, (ncol(pfi_data)-9):ncol(pfi_data))])
+```
+
+## Variables
+
+### Demographic Factors
+
+RACEETH. For this item, parents were asked to identify their race and ethnicity.
+Response options include: (1) White, non-Hispanic; (2) Black, non-Hispanic; (3) Hispanic; (4) Asian or Pacific Islander; and (5) All other races and multiple races.
+
+CSEX. For this item, parents were asked the question: "*What is this child's sex?*" Response options included: (1) Male and (2) Female.
+
+HHTOTALXX. For this item, parents were asked the question: "*Including children, how many people live in this household?*" and were able to input a numeric value.
+
+TTLHHINC. For this item, parents were asked the question: "*Which category best fits the total income of all persons in your household over the past 12 months?*" Response options include: (1) \$0 to \$10,000; (2) \$10,001 to \$20,000; (3) \$20,001 to \$30,000; (4) \$30,001 to \$40,000; (5) \$40,001 to \$50,000; (6) \$50,001 to \$60,000; (7) \$60,001 to \$75,000; (8) \$75,001 to \$100,000; (9) \$100,001 to \$150,000; (10) \$150,001 to \$200,000; (11) \$200,001 to \$250,000; and (12) \$250,001 or more.
+
+PARGRADEX. For this item, parents were asked the question: "*What is the highest grade or level of school that this parent or guardian completed?*" Response options include: (1) Less than high school credential; (2) High school graduate or equivalent; (3) Vocational/technical education after high school or some college; (4) College graduate; and (5) Graduate or professional school.
+
+### Student-Level Factors
+
+HDAUTISMX. For this item, parents were asked the question: "*Has a health or education professional told you that this child has any of the following conditions? g. Autism*" Response options included: (1) Yes; and (2) No.
+
+CENGLPRG. For this item, parents were asked the question: "*Is this child currently enrolled in English as a second language, bilingual education, or an English immersion program?*" Response options included: (-1) Valid Skip; (1) Yes; and (2) No.
+
+DSBLTY. For this item, parents were asked to indicate if their child currently has disability.
+Response options included: (1) Currently has a disability; and (2) Does not currently have a disability.
+
+HDIEPX. For this item, parents were asked the question: "*Is this child receiving any services through an Individualized Education Program (IEP) or services plan?*" Response options included: (-1) Valid Skip; (1) Yes; and (2) No.
+
+SEGRADES. For this item, parents were asked the question: "*Please tell us about this child's grades during this school year. Overall, across all subjects, what grades does this child get?*" Response options included: (-1) Valid Skip; (1) Mostly A's; (2) Mostly B's; (3) Mostly C's; (4) Mostly D's; and (5) School does not give these grades.
+
+SEGRADEQ. For this item, parents were asked the question: "*How would you describe his or her work at school?*" Response options included: (-1) Valid Skip; (1) Excellent; (2) Above average; (3) Average; (4) Below average; and (5) Failing.
+
+SEABSNT. For this item, parents were asked the question: "*Since the beginning of this school year, how many days has this child been absent from school?*" Response options included: (-1) Valid Skip; (1) 0 to 5 days; (2) 6 to 10 days; (3) 11 to 20 days; and (4) More than 20 days.
+
+*For the next few items, parents were asked and were able to input numeric values for the question: "Since the beginning of this school year, how many times have any of this child's teachers or school staff contacted your household about:"*
+
+SESCHWRK. Problems this child is having with school work?\
+SEGWORK.
+Very good school work?\
+SEBEHAVX.
+Behavior problems this child is having in school?\
+SEGBEHAV.
+Very good behavior?
+
+*For the next few items, parents were asked: "Has this child ever had the following experiences?" Response options included: (-1) Valid Skip; (1) Yes; and (2) No.*
+
+SESUSOUT. An out-of-school suspension.\
+SESUSPIN.
+An in-school suspension not counting detentions.\
+SEEXPEL.
+Been expelled from school.
+
+### Family Involvement Factors
+
+FHCHECKX. For this item, parents were asked the question: "*How often does any adult in your household check to see that this child's homework is done?*" Response options included: (-1) Valid Skip; (1) Never; (2) Rarely; (3) Sometimes; and (4) Always.
+
+FHHELP. For this item, parents were asked the question: "*During this school year, about how many days in an average week does anyone in your household help this child with his or her homework?*" Response options included: (-1) Valid Skip; (1) Less than once a week; (2) 1 to 2 days a week; (3) 3 to 4 days a week; (4) 5 or more days a week; and (5) Never.
+
+FSFREQ. For this item, parents were asked the question: "*During this school year, how many times has any adult in the household gone to meetings or participated in activities at this child's school?*" and were able to input a numeric value.
+
+*For the next few items, parents were asked: "How well has this child's school been doing the following things during this school year?" Response options included: (-1) Valid Skip; (1) Very well; (2) Just okay; (3) Not very well; and (4) Does not do it at all.*
+
+FSSPPERF. Letting you know how this child is doing in school between report cards.\
+FSSPHW.
+Providing information about how to help this child with homework.\
+FSSPCOUR.
+Providing information about why this child is placed in particular groups or classes.\
+FSSPROLE.
+Providing information on your expected role at this child's school.
+
+*For the next few items, parents were asked: "How satisfied or dissatisfied are you with each of the following:" Response options included: (-1) Valid Skip; (1) Very satisfied; (2) Somewhat satisfied; (3) Somewhat dissatisfied; and (4) Very dissatisfied.*
+
+FCSCHOOL. The school this child attends this year?\
+FCTEACHR.
+The teachers this child has this year?\
+FCSTDS.
+The academic standards of the school?\
+FCORDER.
+The order and discipline at the school?\
+FCSUPPRT.
+The way that school staff interacts with parents?
+
+*For the next few items, parents were asked: "Since the beginning of this school year, has any adult in this child's household done any of the following things at this child's school?" Response options included: (-1) Valid Skip; (1) Yes; and (2) No.*
+
+FSSPORTX. Attended a school or class event, such as a play, dance, sports event, or science fair.\
+FSVOL.
+Served as a volunteer in this child's classroom or elsewhere in the school.\
+FSMTNG.
+Attended a general school meeting, for example, an open house, or a back-to-school night.\
+FSPTMTNG.
+Attended a meeting of the parent-teacher organization or association.\
+FSATCNFN.
+Gone to a regularly scheduled parent-teacher conference with this child's teacher.\
+FSFUNDRS.
+Participated in fundraising for the school.\
+FSCOMMTE.
+Served on a school committee.\
+FSCOUNSLR.
+Met with a guidance counselor in person.
+
+*For the next few items, parents were asked: "During this school year, has your family received any of the following?" Response options included: (-1) Valid Skip; (1) Yes; and (2) No.*
+
+FSNOTESX. Notes or emails specifically about this child from his or her teachers or school administrators.\
+FSMEMO.
+Memos, emails, or notices addressed to all parents.\
+FSPHONCHX.
+Phone calls specifically about this child from his or her teachers or school administrators.\
+
+# Data Wrangling
+
+```{r, warning=FALSE, message=FALSE}
+# Select only relevant variables
+vars <- c("AGE2018", "ALLGRADEX", "S19TYPE", "RELATION", 
+          "RACEETH", "CSEX", "HHTOTALXX", "TTLHHINC", "PARGRADEX", "ALLGRADEX", #demographic
+          "HDAUTISMX", "CENGLPRG", "DSBLTY", "HDIEPX", #student learning needs
+          "SESCHWRK", "SEGWORK", "SEGRADEQ", #student academics
+          "SEBEHAVX", "SEGBEHAV", "SEABSNT", "SESUSOUT", 
+          "SESUSPIN", "SEEXPEL", #student behavior
+          "FSNOTESX", "FSMEMO", "FSPHONCHX", "FSSPPERF", 
+          "FSSPHW", "FSSPCOUR", "FSSPROLE", #fpp communication
+          "FCSCHOOL", "FCTEACHR", "FCSTDS", "FCORDER", 
+          "FCSUPPRT", #fpp satisfaction
+          "FSATCNFN", "FSCOUNSLR", 
+          "FHCHECKX", "FHHELP", #fpp educational involvement
+          "FSSPORTX", "FSVOL", "FSMTNG", "FSPTMTNG", 
+          "FSFUNDRS", "FSCOMMTE", "FSFREQ" #fpp school involvement
+          )
+
+# Subset the data to include only relevant variables
+pfi_data_clean <- pfi_data %>% 
+  select(all_of(vars)) %>%
+  mutate(CENGLPRG = recode(CENGLPRG, `-1` = 2)) %>% #recode branch items so skip becomes no
+  mutate(HDIEPX = recode(HDIEPX, `-1` = 2)) %>% #recode branch items so skip becomes no
+  filter(if_all(everything(), ~ . != -1)) %>% #remove rows where any selected variable is -1 or Valid Skips
+  mutate(CENGLPRG = factor(recode(CENGLPRG, '1' = "ELL", '2' = "Non-ELL"))) %>%
+  mutate(HDIEPX = factor(recode(HDIEPX, '1' = "IEP", '2' = "Non-IEP")))
+
+# Re-code variables
+recode_ord <- c("SEGRADEQ", "FSSPPERF", "FSSPHW", "FSSPCOUR", 
+                "FSSPROLE", "FCSCHOOL", "FCTEACHR", "FCSTDS", "FCORDER", 
+                "FCSUPPRT") #ordinal variables
+
+recode_dic <- c("SESUSOUT", "SESUSPIN", "SEEXPEL", 
+                "FSNOTESX", "FSMEMO", "FSPHONCHX", "FSATCNFN", 
+                "FSCOUNSLR", "FSSPORTX", "FSVOL", "FSMTNG", 
+                "FSPTMTNG", "FSFUNDRS", "FSCOMMTE") #dichotomous
+
+pfi_data_clean <- pfi_data_clean %>%
+  mutate(across(all_of(recode_ord), ~ recode(., `1` = 4, `2` = 3, `3` = 2, `4` = 1))) %>% #higher = better
+  mutate(across(all_of(recode_dic), ~ recode(., `2` = 0))) %>% #no's becomes 0s
+  mutate(SEGRADEQ = recode(SEGRADEQ, `5` = 0)) %>% #failing becomes 0s
+  mutate(FHHELP = recode(FHHELP, `5` = 0)) #never becomes 0s
+
+#Check Data
+glimpse(pfi_data_clean)
+```
+
+```{r, warning=FALSE, message=FALSE}
+# Calculate Demographic Characteristics
+options(digits = 4) #set outputs limited to 3 decimal places
+options(scipen = 999) #disable scientific notation
+
+## Means and SDs
+summary_stats <- c(mean_cage = mean(pfi_data_clean$AGE2018), #child's age
+                   sd_cage = sd(pfi_data_clean$AGE2018),
+                   mean_hht = mean(pfi_data_clean$HHTOTALXX), #total household members
+                   sd_hht = sd(pfi_data_clean$HHTOTALXX))
+summary_stats
+
+## Labeling Variables
+pfi_data_sum <- pfi_data_clean %>%
+  mutate(S19TYPE = factor(recode(S19TYPE, '-9' = NA_character_, '-1' = "Homeschool", 
+                          '1' = "Catholic", '2' = "Religious", '3' = "Nonsec", 
+                          '4' = "Public"))) %>%
+  mutate(ALLGRADEX = recode(ALLGRADEX, '2' = "G00", '3' = "G00", '4' = "G01", 
+                            '5' = "G02", '6' = "G03", '7' = "G04", '8' = "G05", 
+                            '9' = "G06", '10' = "G07", '11' = "G08", '12' = "G09", 
+                            '13' = "G10", '14' = "G11", '15' = "G12")) %>%
+  mutate(CSEX = factor(recode(CSEX, '1' = "Male", '2' = "Female"))) %>%
+  mutate(RACEETH = factor(recode(RACEETH, '1' = "White", '2' = "Black", 
+                                 '3' = "Hispanic", '4' = "Asian", 
+                                 '5' = "Other"))) %>%
+  mutate(RELATION = factor(recode(RELATION, '1' = "Mother", '2' = "Father", 
+                           '3' = "Aunt", '4' = "Uncle", '5' = "Grandmother", 
+                           '6' = "Grandfather", '7' = "Other", '8' = "Other", 
+                           '9' = "Sibling", '10' = "Other", '11' = "Other"))) %>%
+  mutate(PARGRADEX = factor(recode(PARGRADEX, '1' = "E1Below_HS", '2' = "E2HS_Dip", 
+                             '3' = "E3Voc", '4' = "E4College", '5' = "E5Grad"))) %>%
+  mutate(TTLHHINC = factor(recode(TTLHHINC, '1' = "K010", '2' = "K020", '3' = "K030", 
+                            '4' = "K040", '5' = "K050", '6' = "K060", 
+                            '7' = "K075", '8' = "K100", '9' = "K150", 
+                            '10' = "K200", '11' = "K250", '12' = "K999"))) %>%
+  mutate(DSBLTY = factor(recode(DSBLTY, '1' = "Disability", '2' = "No Disability"))) %>%
+  mutate(CENGLPRG = factor(recode(CENGLPRG, '1' = "ELL", '2' = "Non-ELL")))
+
+## Distributions by percent
+prop.table(table(pfi_data_sum$S19TYPE)) * 100 #school type
+prop.table(table(pfi_data_sum$ALLGRADEX)) * 100 #grade level
+prop.table(table(pfi_data_sum$CSEX)) * 100 #child sex
+prop.table(table(pfi_data_sum$RACEETH)) * 100 #child's race
+prop.table(table(pfi_data_sum$RELATION)) * 100 #respondent's relation
+prop.table(table(pfi_data_sum$PARGRADEX)) * 100 #respondent's education
+prop.table(table(pfi_data_sum$TTLHHINC)) * 100 #household income
+prop.table(table(pfi_data_sum$DSBLTY)) * 100 #disability
+prop.table(table(pfi_data_sum$CENGLPRG)) * 100 #ell
+```
+
+# Multicollinearity Check
+
+```{r, warning=FALSE, message=FALSE}
+pfi_data_clean <- pfi_data_clean[, c(2, 5:45)]
+pfi_data_sub <- pfi_data_clean[20:42]
+
+# Correlations
+cor_matrix <- hetcor(as.data.frame(pfi_data_sub))$correlations
+
+# Reshape correlation matrix into long format
+cor_matrix_long <- melt(cor_matrix)
+
+# Add a column for significance
+cor_matrix_long$Significance <- ifelse(abs(cor_matrix_long$value) > 0.7, "*", "")
+
+# Plot the heatmap
+cor_heatmap <- ggplot(cor_matrix_long, aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                       midpoint = 0, limit = c(-1, 1), space = "Lab") +
+  geom_text(aes(label = Significance), color = "black", size = 3) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 8),
+        axis.title = element_blank()) +
+  labs(title = "Correlation Heatmap", fill = "Correlation")
+cor_heatmap
+
+# Remove highly correlated
+pfi_data_sub <- pfi_data_sub %>%
+  select(-FCSTDS)
+```
+
+# Dimension Reduction
+
+```{r}
+# Perform UVA
+#pfi_uva <- UVA(pfi_data_sub)
+#pfi_uva
+
+# Estimate EGA
+#pfi_fit <- EGA.fit(data = pfi_uva$reduced_data, algorithm = "leiden")
+pfi_fit <- EGA.fit(data = pfi_data_sub, algorithm = "walktrap")
+summary(pfi_fit)
+
+# Compute Node Strength
+pfi_loadings <- net.loads(pfi_fit, loading.method = "experimental") 
+summary(pfi_loadings) 
+#network loading of .2 would generally equate to .4 in terms of PCA metrics
+
+# Remove low loading variables
+pfi_data_sub_load <- pfi_data_sub %>%
+  select(-FSCOUNSLR)
+
+# Redo UVA
+#pfi_uva <- UVA(pfi_data_sub_load)
+#pfi_uva
+
+# Redo EGA
+#pfi_fit <- EGA.fit(data = pfi_uva$reduced_data, algorithm = "leiden")
+pfi_fit <- EGA.fit(data = pfi_data_sub_load, algorithm = "walktrap")
+summary(pfi_fit)
+
+# Compute New Node Strength
+pfi_loadings <- net.loads(pfi_fit, loading.method = "experimental")
+summary(pfi_loadings)
+
+# Bootstrap to check stability
+#pfi_fit_boot <- bootEGA(data = pfi_uva$reduced_data, algorithm = "leiden", 
+#                        EGA.type = "EGA.fit", seed = 123, 
+#                        plot.itemStability = FALSE)
+pfi_fit_boot <- bootEGA(data = pfi_data_sub_load, algorithm = "walktrap", 
+                        EGA.type = "EGA.fit", seed = 123, 
+                        plot.itemStability = FALSE)
+dimensionStability(pfi_fit_boot)
+
+# Get Network (factor) Scores
+#ega_net_scores <- net.scores(data = pfi_uva$reduced_data, pfi_fit, 
+#                             loading.method = "experimental")
+ega_net_scores <- net.scores(data = pfi_data_sub_load, pfi_fit, 
+                             loading.method = "experimental")
+
+# Rename columns to be more descriptive
+ega_net_scores <- as.data.frame(ega_net_scores$scores$std.scores) %>% 
+  rename(communication = 1, information = 2, satisfaction = 3, involvement = 4, homework = 5)
+
+# Save file for use with Mplus
+#ega_net_scores <- cbind(id = seq_len(nrow(ega_net_scores)), ega_net_scores)
+#write.table(ega_net_scores, file = "ega_net_scores.csv")
+```
+
+# Cluster Analysis
+
+```{r}
+# Perform K-means clustering
+set.seed(123)  # For reproducibility
+
+# Determine best k using NbClust
+cluster_model<-FALSE
+
+if(cluster_model){
+nb <- NbClust(ega_net_scores, distance = "euclidean",
+              min.nc = 2, max.nc = 10,
+              method = "kmeans")
+save(nb,file="pfi_nb.Rdata")
+} else{
+  load("pfi_nb.Rdata")
+}
+
+cat("Number of criteria suggesting the number of clusters:\n")
+print(table(nb$Best.nc[1, ]))
+
+kmeans_result <- kmeans(ega_net_scores, centers = 3, nstart = 25)
+kmeans_result$size
+kmeans_result$centers
+
+# Visualize the clustering result
+fviz_cluster(kmeans_result, data = ega_net_scores)
+
+# Adding cluster into dataset
+FPP <- kmeans_result$cluster
+pfi_data_final <- cbind(pfi_data_clean, as.data.frame(FPP))
+```
+
+# Latent Profile Analysis
+
+```{r}
+# Function to import LCA dat file 
+import_LCA <- function(filename) {
+  # Extract number of classes from filename (e.g., LCA_4class.dat)
+  n_classes <- as.integer(str_match(filename, "LCA_(\\d+)class\\.dat")[,2])
+  
+  if (is.na(n_classes)) {
+    stop("Could not extract number of classes from filename. Ensure format is LCA_Xclass.dat")
+  }
+  
+  # Base variables always present
+  base_vars <- c("communication", "information", "satisfaction", 
+                 "involvement", "homework")
+  
+  # Dynamically create probability variables
+  prob_vars <- paste0("probability_in_class_", 1:n_classes)
+  
+  # Add model-assigned class placement
+  final_vars <- c(base_vars, prob_vars, "model_class_placement")
+  
+  # Read data
+  dat <- read_table(filename, col_names = final_vars)
+  return(dat)
+}
+
+# Import Mplus Output
+lpa_4class <- import_LCA("LCA_4class.dat")
+lpa_7class <- import_LCA("LCA_7class.dat")
+```
+
+# Key Relationships with Outcome Variable
+
+```{r}
+#Prepare data
+pfi_data_final <- cbind(pfi_data_final, ega_net_scores)
+
+pfi_data_final_sc <- pfi_data_final %>% 
+  na.omit() %>% #ensure rows with NAs are removed
+  mutate(FPP = as.factor(FPP)) %>% #change outcome to factor
+  mutate(FPP = recode(FPP, "1" = "Low All", "2" = "High I&S", "3" = "High All")) %>%
+  mutate(FPP = factor(FPP, levels = c("Low All", "High I&S", "High All")))
+```
+
+```{r}
+#Prepare data
+pfi_data_final <- cbind(pfi_data_clean, lpa_4class)
+#pfi_data_final <- pfi_data_final %>% left_join(lpa_4class, by = "id")
+
+pfi_data_final_sc <- pfi_data_final %>% 
+  na.omit() %>% #ensure rows with NAs are removed
+  rename(FPP = model_class_placement) %>% #rename variable
+  mutate(FPP = as.factor(FPP)) %>% #change outcome to factor
+  mutate(FPP = recode(FPP, "1" = "Low All", "2" = "High I&S", "3" = "High Com", "4" = "High All")) %>%
+  mutate(FPP = factor(FPP, levels = c("Low All", "High Com", "High I&S", "High All")))
+```
+
+### By Mean Child Characteristic
+
+```{r, echo=TRUE}
+plot_data <- pfi_data_final_sc %>%
+  group_by(FPP) %>%
+  summarize(mean_outcome = mean(SEGBEHAV, na.rm = TRUE)) #Use SESCHWRK/SEGWORK/SEBEHAVX/SEGBEHAV
+
+ggplot(plot_data, aes(x = FPP, y = mean_outcome, fill = FPP)) +
+  geom_col() +
+  labs(title = "Mean Child Characteristic by FPP",
+       x = "FPP", y = "Mean CC")
+```
+
+### By Child Sex
+
+```{r, echo=TRUE}
+plot_data <- pfi_data_final_sc %>%
+  count(CSEX, FPP) %>%
+  group_by(CSEX) %>%
+  mutate(
+    prop = n / sum(n),                  # proportion within each DSBLTY
+    label = scales::percent(prop, 1)    # percentage label (1 = 1 decimal place)
+  )
+
+ggplot(plot_data, aes(x = CSEX, y = n, fill = FPP)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = label), 
+            position = position_stack(vjust = 0.5),  # center labels in stacks
+            color = "white", size = 3.5) +
+  labs(title = "Stacked Bar Chart of Child Sex by FPP",
+       x = "Child Sex",
+       y = "Count",
+       fill = "FPP") +
+  theme_minimal()
+```
+
+### By Child Grade
+
+```{r, echo=TRUE}
+plot_data <- pfi_data_final_sc %>%
+  count(ALLGRADEX, FPP) %>%
+  group_by(ALLGRADEX) %>%
+  mutate(
+    prop = n / sum(n),                  # proportion within each ALLGRADEX
+    label = scales::percent(prop, 1)    # percentage label (1 = 1 decimal place)
+  )
+
+ggplot(plot_data, aes(x = ALLGRADEX, y = n, fill = FPP)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = label), 
+            position = position_stack(vjust = 0.5),  # center labels in stacks
+            color = "white", size = 3.5) +
+  labs(title = "Stacked Bar Chart of Child Grade by FPP",
+       x = "Child Grade",
+       y = "Count",
+       fill = "FPP") +
+  theme_minimal()
+```
+
+### By ELL Status
+
+```{r, echo=TRUE}
+plot_data <- pfi_data_final_sc %>%
+  count(CENGLPRG, FPP) %>%
+  group_by(CENGLPRG) %>%
+  mutate(
+    prop = n / sum(n),                  # proportion within each DSBLTY
+    label = scales::percent(prop, 1)    # percentage label (1 = 1 decimal place)
+  )
+
+ggplot(plot_data, aes(x = CENGLPRG, y = n, fill = FPP)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = label), 
+            position = position_stack(vjust = 0.5),  # center labels in stacks
+            color = "white", size = 3.5) +
+  labs(title = "Stacked Bar Chart of ELL Status by FPP",
+       x = "ELL Status",
+       y = "Count",
+       fill = "FPP") +
+  theme_minimal()
+```
+
+### By Disability Status
+
+```{r, echo=TRUE}
+plot_data <- pfi_data_final_sc %>%
+  count(DSBLTY, FPP) %>%
+  group_by(DSBLTY) %>%
+  mutate(
+    prop = n / sum(n),                  # proportion within each DSBLTY
+    label = scales::percent(prop, 1)    # percentage label (1 = 1 decimal place)
+  )
+
+ggplot(plot_data, aes(x = DSBLTY, y = n, fill = FPP)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = label), 
+            position = position_stack(vjust = 0.5),  # center labels in stacks
+            color = "white", size = 3.5) +
+  labs(title = "Stacked Bar Chart of Disability Status by FPP",
+       x = "Disability Status",
+       y = "Count",
+       fill = "FPP") +
+  theme_minimal()
+```
+
+### By Autism Report
+
+```{r, echo=TRUE}
+plot_data <- pfi_data_final_sc %>%
+  count(HDAUTISMX, FPP) %>%
+  group_by(HDAUTISMX) %>%
+  mutate(
+    prop = n / sum(n),                  # proportion within each HDAUTISMX
+    label = scales::percent(prop, 1)    # percentage label (1 = 1 decimal place)
+  )
+
+ggplot(plot_data, aes(x = HDAUTISMX, y = n, fill = FPP)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = label), 
+            position = position_stack(vjust = 0.5),  # center labels in stacks
+            color = "white", size = 3.5) +
+  labs(title = "Stacked Bar Chart of Autism Report by FPP",
+       x = "Autism Report",
+       y = "Count",
+       fill = "FPP") +
+  theme_minimal()
+```
+
+### By Race
+
+```{r, echo=TRUE}
+plot_data <- pfi_data_final_sc %>%
+  count(RACEETH, FPP) %>%
+  group_by(RACEETH) %>%
+  mutate(
+    prop = n / sum(n),                  # proportion within each DSBLTY
+    label = scales::percent(prop, 1)    # percentage label (1 = 1 decimal place)
+  )
+
+ggplot(plot_data, aes(x = RACEETH, y = n, fill = FPP)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = label), 
+            position = position_stack(vjust = 0.5),  # center labels in stacks
+            color = "white", size = 3.5) +
+  labs(title = "Stacked Bar Chart of Race/Ethnicity by FPP",
+       x = "Race/Ethnicity",
+       y = "Count",
+       fill = "FPP") +
+  theme_minimal()
+```
+
+### By Household Income
+
+```{r, echo=TRUE}
+plot_data <- pfi_data_final_sc %>%
+  count(TTLHHINC, FPP) %>%
+  group_by(TTLHHINC) %>%
+  mutate(
+    prop = n / sum(n),                  # proportion within each DSBLTY
+    label = scales::percent(prop, 1)    # percentage label (1 = 1 decimal place)
+  )
+
+ggplot(plot_data, aes(x = TTLHHINC, y = n, fill = FPP)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = label), 
+            position = position_stack(vjust = 0.5),  # center labels in stacks
+            color = "white", size = 3.5) +
+  labs(title = "Stacked Bar Chart of Household Income by FPP",
+       x = "Household Income",
+       y = "Count",
+       fill = "FPP") +
+  theme_minimal()
+```
+
+### By Parent Education
+
+```{r, echo=TRUE}
+plot_data <- pfi_data_final_sc %>%
+  count(PARGRADEX, FPP) %>%
+  group_by(PARGRADEX) %>%
+  mutate(
+    prop = n / sum(n),                  # proportion within each DSBLTY
+    label = scales::percent(prop, 1)    # percentage label (1 = 1 decimal place)
+  )
+
+ggplot(plot_data, aes(x = PARGRADEX, y = n, fill = FPP)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = label), 
+            position = position_stack(vjust = 0.5),  # center labels in stacks
+            color = "white", size = 3.5) +
+  labs(title = "Stacked Bar Chart of Parent Education by FPP",
+       x = "Parent Education",
+       y = "Count",
+       fill = "FPP") +
+  theme_minimal()
+```
+
+# Regression Analysis
+
+```{r}
+# Set seed for replication purposes
+set.seed(1234)
+
+# Set High All as reference for FPP and White as reference for Race
+pfi_data_final_sc$FPP <- relevel(pfi_data_final_sc$FPP, ref = "High All")
+pfi_data_final_sc$RACEETH <- relevel(pfi_data_final_sc$RACEETH, ref = "White")
+
+# Create new variable in tibble for division into training and test sets
+pfi_data_final_sc_t_t <- pfi_data_final_sc %>% 
+  mutate(id = row_number())
+
+# 70% of data as training set 
+train_set <- pfi_data_final_sc_t_t %>% 
+  sample_frac(0.70) #selects 70% of observations
+
+# 30% of data test set 
+test_set  <- anti_join(pfi_data_final_sc_t_t, train_set, by = 'id') 
+#anti_join, take remaining observations not in train_set
+
+# Remove unnecessary variables
+train_set <- train_set[, c(1:19, 43)]
+test_set <- test_set[, c(1:19, 43)]
+```
+
+```{r echo=T, results='hide'}
+# Select features for training model
+model_train_pfi <- train(FPP ~ .,
+                 data = train_set,
+                 method="multinom", #multinomial regression
+                 stepwise = TRUE, #step-wise
+                 direction="both", #both backwards and foward
+                 trControl = trainControl(method = "cv", number = 10)) 
+                 #cross validation with 10x/folds
+```
+
+```{r}
+# Training Results
+summary(model_train_pfi)
+model_train_pfi$finalModel
+
+# Extract coefficients and standard errors
+coef_matrix <- summary(model_train_pfi$finalModel)$coefficients
+se_matrix <- summary(model_train_pfi$finalModel)$standard.errors
+
+# Calculate z-scores and p-values
+z_scores <- coef_matrix / se_matrix
+p_values <- (1 - pnorm(abs(z_scores), 0, 1)) * 2  # Two-tailed p-values
+
+# Combine values together into dataframe
+train_pfi_descrip <- as.data.frame(t(round(coef_matrix, 3))) %>%
+  rename_with(~ paste0("Coef_", rownames(coef_matrix)), everything()) %>%
+  bind_cols(as.data.frame(t(round(se_matrix, 3))) %>%
+              rename_with(~ paste0("SE_", rownames(se_matrix)), everything())) %>%
+  bind_cols(as.data.frame(t(round(p_values, 3))) %>%
+              rename_with(~ paste0("P_", rownames(p_values)), everything())) %>%
+  rownames_to_column("Predictor")
+
+# View the final model descriptive stats
+train_pfi_descrip
+
+# Evaluate the model performance on the test data
+test_predictions <- predict(model_train_pfi, newdata = test_set)
+```
+
+# Prediction Performance
+
+```{r, warning=FALSE, message=FALSE}
+# Add and recode predicted values in tibble
+test_set_pred <- test_set %>% 
+  mutate (predicted = test_predictions) %>% #add in predicted vector
+  mutate(
+    act_num = ifelse(FPP == "Low All", 1,
+              ifelse(FPP == "High I&S", 2, 3)),
+              #ifelse(FPP == "High Com", 3, 4))),  # numeric var for actual FPP
+    pred_num = ifelse(predicted == "Low All", 1,
+               ifelse(predicted == "High I&S", 2, 3))) %>%
+               #ifelse(predicted == "High Com", 3, 4)))) %>%  # numeric var for predicted FPP
+  mutate_at(c("act_num", "pred_num"), as.factor) #factor for confusion matrix
+
+# Check the data
+glimpse(test_set_pred)
+table(test_set_pred$act_num)
+```
+
+```{r, warning=FALSE, message=FALSE}
+# create confusion matrix using CARET
+confusionMatrix(test_set_pred$act_num, test_set_pred$pred_num,
+                mode = "everything", #reported stats
+                positive = "1")
+```
+
+```{r, warning=FALSE, message=FALSE}
+# Create table with actual and predicted values
+mosaic_table <- table(test_set_pred$act_num, test_set_pred$pred_num)
+mosaic_table #check table
+
+# simple mosaic plot
+mosaicplot(mosaic_table,
+           main = "Confusion matrix for multinomial regression", #title
+           sub = "Accuracy of prediction", #description
+           xlab = "Predicted", #x axis label
+           ylab = "Actual", #y axis label
+           color = c("blue4", "purple4", "hotpink4"),
+           border = "black")
+```
+
+# XGBoost Model Development
+
+## Data Partition
+
+```{r, warning=FALSE, message=FALSE}
+pfi_split <- initial_split(pfi_data_final_sc[, c(1:19, 43)])
+pfi_train <- training(pfi_split)
+pfi_test <- testing(pfi_split)
+```
+
+```{r, warning=FALSE, message=FALSE}
+pfi_train <- pfi_train %>%
+  mutate(FPP = factor(FPP, levels = c("Low All", "High I&S", "High Com", "High All")))
+
+w_table <- table(pfi_train$FPP)
+maj_n   <- max(w_table)
+w_map   <- maj_n/as.numeric(w_table)
+names(w_map) <- names(w_table)
+w_map
+
+pfi_train <- pfi_train %>%
+  mutate(wts = unname(w_map[as.character(FPP)])) %>%
+  mutate(wts = importance_weights(wts))
+```
+
+## Model Specification
+
+```{r, warning=FALSE, message=FALSE}
+# Model Spec
+xgb_spec <- boost_tree(
+  trees = 100,
+  tree_depth = tune(),
+  min_n = tune(),
+  loss_reduction = tune(),
+  sample_size = tune(),
+  mtry = tune(),
+  learn_rate = tune()
+) %>%
+  set_engine("xgboost",
+    objective   = "multi:softprob",
+    eval_metric = "mlogloss" ) %>%
+  set_mode("classification")
+```
+
+```{r, warning=FALSE, message=FALSE}
+# Final Model Spec
+xgb_spec_final <- boost_tree(
+  trees = 1500,
+  tree_depth = tune(),
+  min_n = tune(),
+  loss_reduction = tune(),
+  sample_size = tune(),
+  mtry = tune(),
+  learn_rate = tune()
+) %>%
+  set_engine("xgboost",
+    objective = "multi:softprob",
+    eval_metric = "mlogloss",
+    early_stopping_rounds = 50
+  ) %>%
+  set_mode("classification")
+```
+
+## Recipe and Workflow
+
+```{r, warning=FALSE, message=FALSE}
+# Recipe and Workflow
+pfi_formula <- as.formula("FPP ~ .")
+
+pfi_rec <- recipe(pfi_formula, pfi_train) %>%
+  step_other(all_nominal_predictors(), threshold = .05) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_zv(all_predictors()) #%>%
+  #step_smote(FPP, neighbors = 5)
+
+pfi_wf <- workflow() %>%
+  add_recipe(pfi_rec) %>%
+  add_model(xgb_spec) #%>%
+  #add_case_weights(wts)
+
+# Prep once to compute the right number of predictors
+pfi_prep <- prep(pfi_rec)
+pfi_juice <- juice(pfi_prep)
+```
+
+## Hyperparameter Tuning
+
+```{r message=FALSE, warning=FALSE}
+# Tuning
+xgb_grid <- grid_space_filling(
+  tree_depth(),
+  min_n(),
+  loss_reduction(),
+  sample_size = sample_prop(),
+  finalize(mtry(), pfi_juice),
+  learn_rate(),
+  size = 30
+)
+
+#xgb_grid_focus <- grid_regular(
+#  tree_depth(range = c(3L, 6L)),
+#  learn_rate(range = c(0.02, 0.10)),
+#  loss_reduction(range = c(0.05, 1.0)),
+#  min_n(range = c(5L, 40L)),
+#  sample_prop(range = c(0.6, 0.9)),
+#  levels = c(4, 5, 5, 4, 4)
+#)
+
+# Resamples
+pfi_rs <- vfold_cv(pfi_train)
+
+fit_model<-FALSE
+
+if(fit_model){
+xg_tune_res <- tune_grid(
+  pfi_wf,
+  grid = xgb_grid_focus,
+  resamples = pfi_rs,
+)
+save(xg_tune_res,file="pfi_xg_tune_res.Rdata")
+} else{
+  load("pfi_xg_tune_res.Rdata")
+}
+```
+
+# Model Performance
+
+## Evaluation Metrics
+
+```{r message=FALSE, warning=FALSE}
+collect_metrics(xg_tune_res) %>% 
+  dplyr::filter(.metric %in% c("accuracy", "mn_log_loss", "roc_auc")) %>% 
+  arrange(.metric, mean)
+
+show_best(xg_tune_res, metric = "accuracy", n = 5)
+```
+
+## Variable Importance
+
+```{r}
+# For ROC/AUC Reporting
+final_xgb <- finalize_workflow(pfi_wf, select_best(xg_tune_res, metric = "roc_auc"))
+
+# For Accuracy Reporting
+final_xgb <- finalize_workflow(pfi_wf, select_best(xg_tune_res, metric = "accuracy"))
+
+# Fit final data
+final_xgb %>%
+  fit(data = pfi_train) %>%
+  extract_fit_parsnip() %>%
+  vip::vip(geom = "point") +
+  labs(title = "Variable Importance for Predicting FPP (Multiclass XGBoost)")
+```
